@@ -168,7 +168,7 @@ class ChunkedReader(ContextManagerStream):
 
     def read(self, amt=None):
         """ Read a piece of the file from dropbox. """
-        if not self.r.isclosed():
+        if not self.r.closed:
             # Do some fake seeking
             if self.seek_pos < self.pos:
                 self.r.close()
@@ -215,7 +215,7 @@ class ChunkedReader(ContextManagerStream):
         more than once; only the first call, however, will have an effect.
         """
         # It's a memory leak if self.r not closed.
-        if not self.r.isclosed():
+        if not self.r.closed:
             self.r.close()
         if not self.closed:
             self.closed = True
