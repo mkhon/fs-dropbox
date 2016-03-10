@@ -452,7 +452,7 @@ class DropboxFS(FS):
              'mime_type': 'virtual/dropbox', }
 
     def __init__(self, app_key, app_secret, access_type, token_key,
-                 token_secret, localtime=False, thread_synchronize=True):
+                 token_secret, localtime=False, thread_synchronize=True, root_path='/'):
         """Create an fs that interacts with Dropbox.
 
         :param app_key: Your app key assigned by Dropbox.
@@ -466,12 +466,16 @@ class DropboxFS(FS):
         self.client = create_client(app_key, app_secret, access_type,
                                     token_key, token_secret)
         self.localtime = localtime
+        self.root_path = root_path
 
     def __str__(self):
         return "<DropboxFS: >"
 
     def __unicode__(self):
         return u"<DropboxFS: >"
+
+    def _get_path(self, path):
+        return normpath(self.root_path + '/' + abspath(normpath(path)))
 
     def getmeta(self, meta_name, default=NoDefaultMeta):
         if meta_name == 'read_only':
@@ -481,27 +485,25 @@ class DropboxFS(FS):
     @synchronize
     def open(self, path, mode="rb", **kwargs):
         if 'r' in mode:
-            return ChunkedReader(self.client, path)
+            return ChunkedReader(self.client, self._get_path(path))
         else:
-            return SpooledWriter(self.client, path)
+            return SpooledWriter(self.client, self._get_path(path))
 
     @synchronize
     def getcontents(self, path, mode="rb"):
-        path = abspath(normpath(path))
-        return self.open(self, path, mode).read()
+        return self.open(self, self._get_path(path), mode).read()
 
     def setcontents(self, path, data, *args, **kwargs):
-        path = abspath(normpath(path))
-        self.client.put_file(path, data, overwrite=True)
+        self.client.put_file(self._get_path(path), data, overwrite=True)
 
     def desc(self, path):
-        return "%s in Dropbox" % path
+        return "%s in Dropbox" % self._get_path(path)
 
     def getsyspath(self, path, allow_none=False):
         "Returns a path as the Dropbox API specifies."
         if allow_none:
             return None
-        return client.format_path(abspath(normpath(path)))
+        return client.format_path(self._get_path(path))
 
     def isdir(self, path):
         try:
@@ -526,45 +528,33 @@ class DropboxFS(FS):
 
     def listdir(self, path="/", wildcard=None, full=False, absolute=False,
                 dirs_only=False, files_only=False):
-        path = abspath(normpath(path))
+        path = self._get_path(path)
         children = self.client.children(path)
         return self._listdir_helper(path, children, wildcard, full, absolute,
                                     dirs_only, files_only)
 
     @synchronize
     def getinfo(self, path, cache_read=True):
-        path = abspath(normpath(path))
-        metadata = self.client.metadata(path, cache_read=cache_read)
+        metadata = self.client.metadata(self._get_path(path), cache_read=cache_read)
         return metadata_to_info(metadata, localtime=self.localtime)
 
     def copy(self, src, dst, *args, **kwargs):
-        src = abspath(normpath(src))
-        dst = abspath(normpath(dst))
-        self.client.file_copy(src, dst)
+        self.client.file_copy(self._get_path(src), self._get_path(dst))
 
     def copydir(self, src, dst, *args, **kwargs):
-        src = abspath(normpath(src))
-        dst = abspath(normpath(dst))
-        self.client.file_copy(src, dst)
+        self.client.file_copy(self._get_path(src), self._get_path(dst))
 
     def move(self, src, dst, *args, **kwargs):
-        src = abspath(normpath(src))
-        dst = abspath(normpath(dst))
-        self.client.file_move(src, dst)
+        self.client.file_move(self._get_path(src), self._get_path(dst))
 
     def movedir(self, src, dst, *args, **kwargs):
-        src = abspath(normpath(src))
-        dst = abspath(normpath(dst))
-        self.client.file_move(src, dst)
+        self.client.file_move(self._get_path(src), self._get_path(dst))
 
     def rename(self, src, dst, *args, **kwargs):
-        src = abspath(normpath(src))
-        dst = abspath(normpath(dst))
-        self.client.file_move(src, dst)
+        self.client.file_move(self._get_path(src), self._get_path(dst))
 
     def makedir(self, path, recursive=False, allow_recreate=False):
-        path = abspath(normpath(path))
-        self.client.file_create_folder(path)
+        self.client.file_create_folder(self._get_path(path))
 
     # This does not work, httplib refuses to send a Content-Length: 0 header
     # even though the header is required. We can't make a 0-length file.
@@ -572,12 +562,10 @@ class DropboxFS(FS):
     #    self.client.put_file(path, '', overwrite=False)
 
     def remove(self, path):
-        path = abspath(normpath(path))
-        self.client.file_delete(path)
+        self.client.file_delete(self._get_path(path))
 
     def removedir(self, path, *args, **kwargs):
-        path = abspath(normpath(path))
-        self.client.file_delete(path)
+        self.client.file_delete(self._get_path(path))
 
 
 def main():
@@ -639,7 +627,7 @@ def main():
         token_key, token_secret = options.token_key, options.token_secret
 
     fs = DropboxFS(options.app_key, options.app_secret, options.type,
-                   token_key, token_secret)
+                   token_key, token_secret, root_path='/Foo')
 
     print fs.getinfo('/')
     print fs.getinfo('/Public')
