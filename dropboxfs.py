@@ -14,6 +14,7 @@ import tempfile
 import calendar
 import logging
 from UserDict import UserDict
+from ghost import Ghost
 
 from fs.base import *
 from fs.path import *
@@ -567,6 +568,21 @@ class DropboxFS(FS):
     def removedir(self, path, *args, **kwargs):
         self.client.file_delete(self._get_path(path))
 
+def authorize(url, login, password):
+    # open auth URL
+    ghost = Ghost().start()
+    page, extra_resources = ghost.open(url)
+    assert page.http_status == 200
+
+    # login
+    ghost.set_field_value("input[name=login_email]", login)
+    ghost.set_field_value("input[name=login_password]", password)
+    page, extra_resources = ghost.click("button[type=submit]", expect_loading=True)
+    assert page.http_status == 200
+
+    # authorize
+    page, extra_resources = ghost.click("button[name=allow_access]", expect_loading=True)
+    assert page.http_status == 200
 
 def main():
     parser = optparse.OptionParser(prog="dropboxfs",
@@ -593,6 +609,14 @@ def main():
         "-b",
         "--token-secret",
         help="Your access token secret (if you previously obtained one.")
+    parser.add_option(
+        "-l",
+        "--user-login",
+        help="Your Dropbox login.")
+    parser.add_option(
+        "-p",
+        "--user-password",
+        help="Your Dropbox password.")
 
     (options, args) = parser.parse_args()
 
@@ -606,20 +630,25 @@ def main():
                                    options.type)
         # Get a temporary token, so we can make oAuth calls.
         t = s.obtain_request_token()
-        print "Please visit the following URL and authorize this application.\n"
-        print s.build_authorize_url(t)
-        print "\nWhen you are done, please press <enter>."
-        raw_input()
-        # Trade up to permanent access token.
-        a = s.obtain_access_token(t)
-        token_key, token_secret = a.key, a.secret
-        print 'Your access token will be printed below, store it for later use.'
-        print 'For future accesses, you can pass the --token-key and --token-secret'
-        print ' arguments.\n'
-        print 'Access token:', a.key
-        print 'Access token secret:', a.secret
-        print "\nWhen you are done, please press <enter>."
-        raw_input()
+        if options.user_login and options.user_password:
+            authorize(s.build_authorize_url(t), options.user_login, options.user_password)
+            a = s.obtain_access_token(t)
+            token_key, token_secret = a.key, a.secret
+        else:
+            print "Please visit the following URL and authorize this application.\n"
+            print s.build_authorize_url(t)
+            print "\nWhen you are done, please press <enter>."
+            raw_input()
+            # Trade up to permanent access token.
+            a = s.obtain_access_token(t)
+            token_key, token_secret = a.key, a.secret
+            print 'Your access token will be printed below, store it for later use.'
+            print 'For future accesses, you can pass the --token-key and --token-secret'
+            print ' arguments.\n'
+            print 'Access token:', a.key
+            print 'Access token secret:', a.secret
+            print "\nWhen you are done, please press <enter>."
+            raw_input()
     elif not options.token_key or not options.token_secret:
         parser.error('You must provide both the access token and the '
                      'access token secret.')
