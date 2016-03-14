@@ -14,7 +14,6 @@ import tempfile
 import calendar
 import logging
 from UserDict import UserDict
-from ghost import Ghost
 
 from fs.base import *
 from fs.path import *
@@ -568,9 +567,11 @@ class DropboxFS(FS):
     def removedir(self, path, *args, **kwargs):
         self.client.file_delete(self._get_path(path))
 
-def authorize(url, login, password):
+def authorize_ghost(url, login, password):
+    from ghost import Ghost
+
     # open auth URL
-    ghost = Ghost().start()
+    ghost = Ghost(log_level=logging.WARNING).start()
     page, extra_resources = ghost.open(url)
     assert page.http_status == 200
 
@@ -583,6 +584,94 @@ def authorize(url, login, password):
     # authorize
     page, extra_resources = ghost.click("button[name=allow_access]", expect_loading=True)
     assert page.http_status == 200
+
+def authorize_phantomjs(url, login, password):
+    auth_script = """
+// get parameters
+var system = require('system');
+var url = system.env['URL'];
+var login = system.env['LOGIN'];
+var password = system.env['PASSWORD'];
+
+var webpage = require('webpage');
+var page = webpage.create();
+//page.settings.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_3) AppleWebKit/601.4.4 (KHTML, like Gecko) Version/9.0.3 Safari/601.4.4';
+//page.settings.loadImages = false;
+var loadInProgress = false;
+
+page.onConsoleMessage = function(msg) {
+  console.log(msg);
+};
+
+page.onLoadStarted = function() {
+  loadInProgress = true;
+  //console.log("load started");
+};
+
+page.onLoadFinished = function() {
+  loadInProgress = false;
+  //console.log("load finished");
+};
+
+var steps = [
+  function() {
+    // load login page
+    page.open(url);
+  },
+  function() {
+    // enter credentials
+    page.evaluate(function(login, password) {
+      $('input[name=login_email]').val(login);
+      $('input[name=login_password]').val(password);
+      $('form[action="/ajax_login"] button[type=submit]').click();
+    }, login, password);
+    loadInProgress = true;
+  },
+  function() {
+    // allow access
+    page.evaluate(function() {
+      $('button[name=allow_access]').click();
+    });
+    loadInProgress = true;
+  },
+  function() {
+    // anchor function for debugging
+  },
+];
+
+function dumpPage()
+{
+    fs = require('fs');
+    result = page.evaluate(function() {
+        return document.querySelectorAll("html")[0].outerHTML;
+    });
+    fs.write('auth' + testindex + '.html', result, 'w');
+}
+
+setTimeout(function() {
+  console.log("Timed out.");
+  phantom.exit();
+}, 30*1000);
+
+var testindex = 0;
+interval = setInterval(function() {
+  if (!loadInProgress && typeof steps[testindex] == "function") {
+    //console.log("Step " + (testindex + 1));
+    steps[testindex]();
+    testindex++;
+    //dumpPage();
+  }
+  if (typeof steps[testindex] != "function") {
+    //console.log("Done");
+    phantom.exit();
+  }
+}, 50);
+"""
+    import os, subprocess
+    # add --debug=true for phantomjs debug
+    p = subprocess.Popen(['phantomjs', '/dev/stdin'], stdin=subprocess.PIPE,
+        env=dict(os.environ, URL=url, LOGIN=login, PASSWORD=password))
+    p.communicate(input=auth_script)
 
 def main():
     parser = optparse.OptionParser(prog="dropboxfs",
@@ -631,7 +720,9 @@ def main():
         # Get a temporary token, so we can make oAuth calls.
         t = s.obtain_request_token()
         if options.user_login and options.user_password:
-            authorize(s.build_authorize_url(t), options.user_login, options.user_password)
+            authorize_url = s.build_authorize_url(t)
+            print "Using authorize URL {0}".format(authorize_url)
+            authorize_phantomjs(authorize_url, options.user_login, options.user_password)
             a = s.obtain_access_token(t)
             token_key, token_secret = a.key, a.secret
         else:
